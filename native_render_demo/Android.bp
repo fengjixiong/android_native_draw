@@ -1,0 +1,88 @@
+// Simplified Android.bp for NativeRenderDemo
+
+cc_prebuilt_library_shared {
+    name: "libcompany_demo_core",
+    target: {
+        android_arm: {
+            srcs: ["company_demo_core/prebuild_libs/armeabi-v7a/libcompany_demo_core.so"],
+        },
+        android_arm64: {
+            srcs: ["company_demo_core/prebuild_libs/arm64-v8a/libcompany_demo_core.so"],
+        },
+        android_x86_64: {
+            srcs: ["company_demo_core/prebuild_libs/x86_64/libcompany_demo_core.so"],
+        },
+    },
+    strip: {
+        none: true,
+    },
+    shared_libs: [
+        "liblog",
+    ],
+
+    export_include_dirs: ["company_demo_core/public"],
+}
+
+cc_prebuilt_library_shared {
+    name: "libcompany_framework",
+    target: {
+        android_arm: {
+            srcs: ["libcompany_framework/prebuild_libs/armeabi-v7a/libcompany_framework.so"],
+        },
+        android_arm64: {
+            srcs: ["libcompany_framework/prebuild_libs/arm64-v8a/libcompany_framework.so"],
+        },
+        android_x86_64: {
+            srcs: ["libcompany_framework/prebuild_libs/x86_64/libcompany_framework.so"],
+        },
+    },
+    strip: {
+        none: true,
+    },
+    shared_libs: [
+        "liblog",
+    ],
+
+    export_include_dirs: ["libcompany_framework/public"],
+}
+
+cc_binary {
+    name: "native_render_demo",
+    srcs: [
+        "src/main_render.cpp",
+        "src/main_utils.cpp",
+        "src/company_test.cpp",
+    ],
+
+    local_include_dirs: [
+        "src",
+    ],
+
+    strip: {
+        none: true,
+    },
+
+    shared_libs: [
+        "libandroid",
+        "libbinder",
+        "libcutils",
+        "libutils",
+        "liblog",
+        "libui",
+        "libgui",
+        "libhardware",
+        "libcompany_demo_core",
+        "libcompany_framework",
+    ],
+
+    cflags: [
+        "-std=c++14",
+        "-g",
+        "-O0",
+        "-Wall",
+        "-Werror",
+        "-Wno-unused-parameter",
+        "-Wno-implicit-fallthrough",
+        "-DLOG_TAG=\"native_render_demo\"",
+    ],
+}

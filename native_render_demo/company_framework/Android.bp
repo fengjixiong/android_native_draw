@@ -1,0 +1,36 @@
+cc_library_shared {
+    name: "libcompany_framework",
+
+    local_include_dirs: [
+        "public",
+    ],
+
+    srcs: [
+        "src/company_framework_helper.cpp",
+        "src/company_gpu_helper.cpp",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-std=c++14",
+    ],
+
+    // 系统图形库依赖
+    shared_libs: [
+        "liblog",
+        "libutils",
+        "libui",
+        "libgui",
+        "libcutils",
+        "libbase",
+        "libbinder",
+        "libOpenSLES",
+        "libjnigraphics",
+        "libEGL",
+        "libGLESv2",
+    ],
+
+    // 导出头文件给外部使用
+    export_include_dirs: ["public"],
+}

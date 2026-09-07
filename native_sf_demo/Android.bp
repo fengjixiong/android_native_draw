@@ -1,0 +1,27 @@
+// Simplified Android.bp for NativeSFDemo
+cc_binary {
+    name: "NativeSFDemo",
+    srcs: [
+        "main_NativeSFDemo.cpp",
+        "advanced_surface_manager.cpp",
+        "vsync_frame_controller.cpp"
+    ],
+
+    shared_libs: [
+        "libandroid",
+        "libbinder",
+        "libcutils",
+        "libutils",
+        "liblog",
+        "libui",
+        "libgui",
+        "libhardware",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-unused-parameter",
+        "-DLOG_TAG=\"NativeSFDemo\"",
+    ],
+}

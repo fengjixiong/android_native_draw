@@ -1,0 +1,36 @@
+LOCAL_PATH := $(call my-dir)
+
+#================================ 编译 company_demo_core =================================
+include $(CLEAR_VARS)
+
+LOCAL_MODULE       := company_demo_core
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/src
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/public
+LOCAL_SRC_FILES  := $(wildcard $(LOCAL_PATH)/src/*.cpp)
+
+LOCAL_CFLAGS += -Wall -std=c++14 -DLOG_TAG='"company_demo-COR"'
+LOCAL_CFLAGS += -Wno-unused-but-set-variable
+LOCAL_CFLAGS += -Wno-unused-variable
+LOCAL_CFLAGS += -Wno-missing-declarations
+LOCAL_CFLAGS += -Wno-non-c-typedef-for-linkage
+LOCAL_CFLAGS += -Wno-reorder-init-list
+LOCAL_CFLAGS += -Wno-unused-private-field
+LOCAL_CFLAGS += -Wno-inconsistent-missing-override
+LOCAL_CFLAGS += -Wno-writable-strings
+LOCAL_CFLAGS += -Wno-c99-designator
+LOCAL_CFLAGS += -Wno-tautological-overlap-compare
+LOCAL_CFLAGS += -Wno-reorder-ctor
+LOCAL_CFLAGS += -Wno-unused-function
+LOCAL_CFLAGS += -Wshadow
+#LOCAL_CFLAGS += -fvisibility=hidden
+
+APP_STL := c++_static
+APP_CPPFLAGS += -std=c++14
+
+LOCAL_STRIP_MODULE := false
+LOCAL_LDLIBS = -llog
+LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+
+include $(BUILD_SHARED_LIBRARY)
+#===============================================================================

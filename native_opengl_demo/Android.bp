@@ -1,0 +1,53 @@
+cc_defaults {
+    name: "native_opengl_demo_defaults",
+
+    cflags: [
+        "-DGL_GLEXT_PROTOTYPES",
+        "-DEGL_EGLEXT_PROTOTYPES",
+
+        "-Wall",
+        "-Werror",
+        "-Wunused",
+        "-Wunreachable-code",
+    ],
+
+    shared_libs: [
+        "libandroidfw",
+        "libbase",
+        "libbinder",
+        "libcutils",
+        "liblog",
+        "libutils",
+    ],
+}
+
+// bootanimation executable
+// =========================================================
+
+cc_binary {
+    name: "native_opengl_demo",
+    defaults: ["native_opengl_demo_defaults"],
+
+    header_libs: ["jni_headers"],
+
+    shared_libs: [
+        "libOpenSLES",
+        "libui",
+        "libjnigraphics",
+        "libEGL",
+        "libGLESv2",
+        "libgui",
+        "libsync",
+    ],
+
+    srcs: [
+        "BootAnimationUtil.cpp",
+        "BootAnimation.cpp",
+        "bootanimation_main.cpp",
+    ],
+
+    cflags: [
+        "-Wno-deprecated-declarations",
+    ],
+}
+

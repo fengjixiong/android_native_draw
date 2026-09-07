@@ -1,0 +1,427 @@
+#include <log/log.h>
+#include <utils/RefBase.h>
+#include <renderengine/ExternalTexture.h>
+#include <renderengine/LayerSettings.h>
+#include <renderengine/RenderEngine.h>
+#include <renderengine/impl/ExternalTexture.h>
+#include <ui/GraphicBuffer.h>
+#include <ui/GraphicBufferMapper.h>
+#include <mutex>
+#include <inttypes.h>   // PRIx64
+#include <android/native_window.h>
+
+using namespace android;
+using namespace android::renderengine;
+
+int bufferGetFd(sp<GraphicBuffer> buffer, int platform) {
+    struct ANativeWindowBuffer* native_buffer = buffer.get();
+    //转成Android标准的handle
+    const native_handle_t *buffer_handle = native_buffer->handle;
+    int version = buffer_handle->version;
+    int numFds  = buffer_handle->numFds;
+    int numInts = buffer_handle->numInts;
+    if (platform >= numFds + numInts) {
+        ALOGE("%s platform(%d) exceeds handle->data[%d+%d]!", __func__, platform, numFds, numInts);
+        return -1;
+    } else {
+        ALOGD("%s platform (%d), version (%d), numFds (%d), numInts (%d)",
+            __func__, platform, version, numFds, numInts);
+    }
+    int fd = buffer_handle->data[platform];
+    return fd;
+}
+
+int bufferGetSize(sp<GraphicBuffer> buffer) {
+
+    struct ANativeWindowBuffer* native_buffer = buffer.get();
+    //转成Android标准的handle
+    const native_handle_t *buffer_handle = native_buffer->handle;
+
+    uint64_t totalSize = 0;
+    GraphicBufferMapper::get().getAllocationSize(buffer_handle, &totalSize);
+    return totalSize;
+}
+
+uint32_t fileGetSize(const char* filepath) {
+    FILE* file = fopen(filepath, "rb");
+    if (file == nullptr) return -1;
+
+    fseek(file, 0, SEEK_END);
+    uint32_t size = (uint32_t)ftell(file);
+    fseek(file, 0, SEEK_SET);
+    fclose(file);
+
+    return size;
+}
+
+int fillBuffer(sp<GraphicBuffer> buffer, int platform, const char* in_file)
+{
+    ALOGD("%s enter", __func__);
+    int32_t fd     = bufferGetFd(buffer, platform);
+    int32_t size   = bufferGetSize(buffer);
+    int width      = buffer->getWidth();
+    int height     = buffer->getHeight();
+    int stride     = buffer->getStride();
+    int format     = buffer->getPixelFormat();
+    uint64_t usage = buffer->getUsage();
+    ALOGD("%s fd=%d, size=%d, in_file=%s", __func__, fd, size, in_file);
+    ALOGD("%s w=%d, h=%d, s=%d, f=%d, u=0x%" PRIx64, __func__,
+        width, height, stride, format, usage);
+
+    if (fd <0 || size <=0 || !in_file) {
+        ALOGE("%s error condition: fd=%d, size=%d, in_file=%s", __func__, fd, size, in_file);
+        return -1;
+    }
+
+    // 读取文件
+    int data_size = fileGetSize(in_file);
+    if (data_size != size) {
+        ALOGE("%s file size %d != buffer size %d", __func__, data_size, size);
+        return -1;
+    }
+
+    uint8_t* pixels = (uint8_t*)malloc(size);
+    if (pixels == NULL) {
+        ALOGE("%s malloc fail!", __func__);
+        return -1;
+    }
+    FILE* fp = fopen(in_file, "rb");
+    if (fp == NULL) {
+        ALOGE("cannot open file");
+        return -1;
+    }
+    size_t read_len = fread(pixels, sizeof(uint8_t), data_size, fp);
+    if (read_len != data_size) {
+        ALOGE("read num %d != image size: %d", (int)read_len, data_size);
+        fclose(fp);
+        if (pixels != NULL)
+            free(pixels);
+        return -1;
+    }
+    fclose(fp);
+
+    // 写buffer
+    void* addr = ::mmap(nullptr, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    if (addr == MAP_FAILED) {
+        ALOGE("mmap failed");
+        if (pixels != NULL)
+            free(pixels);
+        return -1;
+    }
+    memcpy(addr, pixels, data_size);
+    ::munmap(addr, data_size);
+    if (pixels != NULL)
+        free(pixels);
+
+    return 0;
+}
+
+int dumpBuffer(sp<GraphicBuffer> buffer, int platform, const char* out_dir) {
+    ALOGD("%s enter", __func__);
+    int32_t fd     = bufferGetFd(buffer, platform);
+    int32_t size   = bufferGetSize(buffer);
+    int width      = buffer->getWidth();
+    int height     = buffer->getHeight();
+    int stride     = buffer->getStride();
+    int format     = buffer->getPixelFormat();
+    uint64_t usage = buffer->getUsage();
+    ALOGD("%s fd=%d, size=%d", __func__, fd, size);
+    ALOGD("%s w=%d, h=%d, s=%d, f=%d, u=0x%" PRIx64, __func__,
+        width, height, stride, format, usage);
+
+    if (fd <0 || size <=0 || !out_dir) {
+        ALOGE("error condition: fd=%d, size=%d, out_dir=%s", fd, size, out_dir);
+        return -1;
+    }
+
+    // 生成文件名字
+    char dump_file[200];
+    snprintf(dump_file, 200, "%s/IM_f%d_s%d_w%d_h%d_u0x%" PRIx64 ".raw",
+            out_dir, format, stride, width, height, usage);
+
+    // mmap dump
+    ALOGD("%s mmap dump to %s", __func__, dump_file);
+    void* addr = ::mmap(nullptr, size, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+    if (addr == MAP_FAILED) {
+        ALOGE("mmap failed");
+        return -1;
+    }
+    FILE* fp = fopen(dump_file, "wb");
+    if (fp == NULL) {
+        ALOGE("cannot open file: %s", dump_file);
+        return -1;
+    }
+    fwrite(addr, size, sizeof(char), fp);
+    fclose(fp);
+    ::munmap(addr, size);
+
+    return 0;
+}
+
+int loadBuffer(const sp<GraphicBuffer>& buffer, uint32_t rgba) {
+    ALOGD("%s enter, RGBA color=0x%x", __func__, rgba);
+
+    uint8_t r = rgba & 0xff;
+    uint8_t g = (rgba >> 8) & 0xff;
+    uint8_t b = (rgba >> 16) & 0xff;
+    uint8_t a = (rgba >> 24) & 0xff;
+
+    if(buffer->getWidth() <= 0 || buffer->getHeight() <= 0) {
+        ALOGE("%s Impossible buffer size!", __func__);
+        return -1;
+    }
+    int width = static_cast<int32_t>(buffer->getWidth());
+    int height = static_cast<int32_t>(buffer->getHeight());
+
+    void* pixels{nullptr};
+    int32_t stride{0};
+    if (auto status = buffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels,
+                                   nullptr /*outBytesPerPixel*/, &stride);
+        status < 0) {
+        ALOGE("%s Failed to lock pixels!", __func__);
+        return -1;
+    } else {
+        ALOGD("%s stride=%d", __func__, stride);
+    }
+    stride = (int)buffer->getStride();
+    for (int32_t j = 0; j < height; j++) {
+        uint8_t* iter = (uint8_t*)pixels + (stride * j) * 4;
+        for (int32_t i = 0; i < width; i++) {
+            iter[0] = r;
+            iter[1] = g;
+            iter[2] = b;
+            iter[3] = a;
+            iter += 4;
+        }
+    }
+
+    if (auto status = buffer->unlock(); status < 0) {
+        ALOGE("Failed to unlock pixels!");
+        return -1;
+    }
+
+    return 0;
+}
+
+int saveBuffer(const sp<GraphicBuffer>& buffer, const char* filename) {
+    ALOGD("%s enter, filename=%s", __func__, filename);
+
+    void* pixels{nullptr};
+    int32_t stride{0};
+    if (auto status = buffer->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, &pixels,
+                                   nullptr /*outBytesPerPixel*/, &stride);
+        status < 0) {
+        ALOGE("Failed to lock pixels!");
+        return -1;
+    }
+    stride = (int)buffer->getStride();
+    int width = (int)buffer->getWidth();
+    int height = (int)buffer->getHeight();
+    int format = (int)buffer->getPixelFormat();
+    uint64_t usage = buffer->getUsage();
+    ALOGD("%s buffer info:", __func__);
+    ALOGD("%s     width=%d", __func__, width);
+    ALOGD("%s     height=%d", __func__, height);
+    ALOGD("%s     stride=%d", __func__, stride);
+    ALOGD("%s     format=0x%x", __func__, format);
+    ALOGD("%s     usage=%" PRIx64, __func__, usage);
+
+    int im_size = height * stride * sizeof(uint32_t);
+    FILE* fp = fopen(filename, "wb");
+    if (fp != NULL) {
+        fwrite(pixels, im_size, 1, fp);
+        fclose(fp);
+    } else {
+        ALOGE("file cannot open: %s", filename);
+    }
+
+    if (auto status = buffer->unlock(); status < 0) {
+        ALOGE("Failed to unlock pixels!");
+        return -1;
+    }
+
+    return 0;
+}
+
+// This value doesn't matter, as it's not read. TODO(b/199918329): Once we remove
+// GLESRenderEngine we can remove this, too.
+static constexpr const bool kUseFrameBufferCache = false;
+
+std::unique_ptr<RenderEngine> createRenderEngine(RenderEngine::RenderEngineType type) {
+    ALOGD("%s enter, type=%d", __func__, (int)type);
+
+    auto args = RenderEngineCreationArgs::Builder()
+                        .setPixelFormat(static_cast<int>(ui::PixelFormat::RGBA_8888))
+                        .setImageCacheSize(1)
+                        .setEnableProtectedContext(true)
+                        .setPrecacheToneMapperShaderOnly(false)
+                        .setSupportsBackgroundBlur(true)
+                        .setContextPriority(RenderEngine::ContextPriority::REALTIME)
+                        .setRenderEngineType(type)
+                        .setUseColorManagerment(true)
+                        .build();
+    return RenderEngine::create(args);
+}
+
+std::shared_ptr<ExternalTexture> allocateBuffer(RenderEngine& engine, uint32_t width,
+                                               uint32_t height,
+                                               int32_t pixel_format = HAL_PIXEL_FORMAT_RGBA_8888,
+                                               uint64_t usageFlags = 0,
+                                               std::string name = "output") {
+    ALOGD("%s enter, w=%d, h=%d, px=%d, name=%s, usage=0x%" PRIx64,
+         __func__, width, height, (int)pixel_format, name.c_str(), usageFlags);
+
+    sp<GraphicBuffer> buffer = sp<GraphicBuffer>::make(width, height,
+                                                       pixel_format, 1u,
+                                                       usageFlags,
+                                                       std::move(name));
+    std::shared_ptr<ExternalTexture> texture =
+        std::make_shared<impl::ExternalTexture>(buffer, engine,
+                   impl::ExternalTexture::Usage::READABLE | impl::ExternalTexture::Usage::WRITEABLE);
+
+    return texture;
+}
+
+std::shared_ptr<ExternalTexture> copyBuffer(RenderEngine& engine,
+                                           std::shared_ptr<ExternalTexture> original,
+                                           int32_t pixel_format,
+                                           uint64_t usageFlags, std::string name) {
+
+    ALOGD("%s enter, px=%d, name=%s", __func__, (int)pixel_format, name.c_str());
+
+    const uint32_t width = original->getBuffer()->getWidth();
+    const uint32_t height = original->getBuffer()->getHeight();
+    std::shared_ptr<ExternalTexture> texture = allocateBuffer(engine, width, height, pixel_format, usageFlags, name);
+
+    const Rect displayRect(0, 0, static_cast<int32_t>(width), static_cast<int32_t>(height));
+    DisplaySettings display{
+            .physicalDisplay = displayRect,
+            .clip = displayRect,
+            .maxLuminance = 500,
+    };
+
+    const FloatRect layerRect(0, 0, width, height);
+    LayerSettings layer{
+        .geometry =
+            Geometry{
+                .boundaries = layerRect,
+            },
+        .source =
+            PixelSource{
+                .buffer =
+                    Buffer{
+                            .buffer = original,
+                    },
+            },
+        .alpha = half(1.0f),
+    };
+    auto layers = std::vector<LayerSettings>{layer};
+
+    sp<Fence> waitFence =
+            engine.drawLayers(display, layers, texture, kUseFrameBufferCache, base::unique_fd())
+                    .get()
+                    .value();
+    waitFence->waitForever(LOG_TAG);
+    return texture;
+}
+
+int main(int argc, char** argv) {
+    ALOGD("%s enter", __func__);
+    // GLES = 1,
+    // THREADED = 2,
+    // SKIA_GL = 3,
+    // SKIA_GL_THREADED = 4,
+    // SKIA_VK = 5,
+    // SKIA_VK_THREADED = 6,
+    int platform = 0; // 0-Qcom, 1-MTK
+    int in_pixel_format          = HAL_PIXEL_FORMAT_RGBA_8888;
+    int out_pixel_format         = in_pixel_format;
+    int width                    = 256;
+    int height                   = 256;
+    const char*  in_file_path    = NULL;
+    const char*  out_dir         = NULL;
+    uint64_t in_usage            = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE | GRALLOC_USAGE_SW_WRITE_OFTEN;
+    uint64_t out_usage           = GRALLOC_USAGE_HW_RENDER | GRALLOC_USAGE_HW_TEXTURE;
+    RenderEngine::RenderEngineType engine_type = RenderEngine::RenderEngineType::SKIA_GL_THREADED;
+
+    int arg = 1;
+    if (argc > arg) {
+        platform = atoi(argv[arg]);
+        arg++;
+    }
+    if (argc > arg) {
+        engine_type = static_cast<RenderEngine::RenderEngineType>(atoi(argv[arg]));
+        arg++;
+    }
+    if (argc > arg) {
+        width = atoi(argv[arg]);
+        arg++;
+    }
+    if (argc > arg) {
+        height = atoi(argv[arg]);
+        arg++;
+    }
+    if (argc > arg) {
+        in_file_path = argv[arg];
+        arg++;
+    }
+    if (argc > arg) {
+        out_dir = argv[arg];
+        arg++;
+    }
+    if (argc > arg) {
+        in_pixel_format = atoi(argv[arg]);
+        arg++;
+    }
+    if (argc > arg) {
+        out_pixel_format = atoi(argv[arg]);
+        arg++;
+    }
+    if (argc > arg) {
+        in_usage = std::stoull(argv[arg], nullptr, 0);
+        arg++;
+    }
+    if (argc > arg) {
+        out_usage = std::stoull(argv[arg], nullptr, 0);
+        arg++;
+    }
+
+    printf("%s params:\n", argv[0]);
+    printf("  [1] platform         = %d\n",            platform);
+    printf("  [2] engine_type      = %d\n",            engine_type);
+    printf("  [3] width            = %d\n",            width);
+    printf("  [4] height           = %d\n",            height);
+    printf("  [5] in_file_path     = %s\n",            in_file_path);
+    printf("  [6] out_dir          = %s\n",            out_dir);
+    printf("  [7] in_pixel_format  = %d\n",            in_pixel_format);
+    printf("  [8] out_pixel_format = %d\n",            out_pixel_format);
+    printf("  [9]  in_usage        = 0x%" PRIx64 "\n", in_usage);
+    printf("  [10] out_usage       = 0x%" PRIx64 "\n", out_usage);
+
+    std::unique_ptr<RenderEngine> engine =
+        createRenderEngine(engine_type);
+
+    std::shared_ptr<ExternalTexture> srcBuffer =
+        allocateBuffer(*engine, width, height, in_pixel_format, in_usage, "src_buffer");
+
+    if (in_file_path == NULL)
+        loadBuffer(srcBuffer->getBuffer(), 0xff0000ff);
+    else
+        fillBuffer(srcBuffer->getBuffer(), platform, in_file_path);
+
+    // 转为GPU buffer
+    std::shared_ptr<ExternalTexture> tmpBuffer =
+        copyBuffer(*engine, srcBuffer, out_pixel_format, out_usage, "tmp_buffer");
+
+    // 转回CPU buffer
+    std::shared_ptr<ExternalTexture> dstBuffer =
+        copyBuffer(*engine, tmpBuffer, out_pixel_format, out_usage | GRALLOC_USAGE_SW_WRITE_OFTEN, "dst_buffer");
+
+    if (out_dir == NULL)
+        saveBuffer(dstBuffer->getBuffer(), "copybuffer.raw");
+    else
+        dumpBuffer(tmpBuffer->getBuffer(), platform, out_dir);
+
+    return 0;
+}
+

@@ -1,0 +1,29 @@
+LOCAL_PATH := $(call my-dir)
+
+# ====== 预编译库 libcompany_framework.so =====
+include $(CLEAR_VARS)
+LOCAL_MODULE := company_framework
+LOCAL_SRC_FILES := prebuild_libs/$(TARGET_ARCH_ABI)/libcompany_framework.so
+LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)/include
+include $(PREBUILT_SHARED_LIBRARY)
+
+#======= 编译 company_framework_test ============
+include $(CLEAR_VARS)
+
+LOCAL_MODULE       := company_framework_test
+
+LOCAL_C_INCLUDES += $(LOCAL_PATH)/public
+LOCAL_SRC_FILES  := main_test_simple.cpp
+
+LOCAL_CFLAGS += -Wall -std=c++14
+
+APP_STL := c++_static
+APP_CPPFLAGS += -std=c++14
+
+LOCAL_STRIP_MODULE := false
+LOCAL_SHARED_LIBRARIES := company_framework
+LOCAL_LDLIBS = -llog
+LOCAL_LDFLAGS += "-Wl,-z,max-page-size=16384"
+
+include $(BUILD_EXECUTABLE)
+#===============================================================================

@@ -1,0 +1,39 @@
+cc_binary {
+    name: "native_render_engine",
+    srcs: [
+        "main_renderengine.cpp",
+        "utils_buffer.cpp",
+        "copy_buffer_engine.cpp",
+        "copy_buffer_gles.cpp",
+    ],
+    defaults: [
+        "android.hardware.graphics.composer3-ndk_shared",
+        "librenderengine_deps", 
+        "surfaceflinger_defaults",
+    ],
+    static_libs: [
+        "librenderengine",
+        "libshaders",
+        "libtonemap",
+    ],
+    cflags: [
+        "-DLOG_TAG=\"native_render_engine\"",
+        "-Wno-sign-conversion",
+        "-Wno-shorten-64-to-32",
+        "-Wno-sign-compare",
+    ],
+    shared_libs: [
+        "libbase",
+        "libcutils",
+        "libjnigraphics",
+        "libgui",
+        "liblog",
+        "libnativewindow",
+        "libprocessgroup",
+        "libsync",
+        "libui",
+        "libutils",
+        "libEGL",
+        "libGLESv3",
+    ],
+}

@@ -1,0 +1,20 @@
+cc_binary {
+    name: "pure_color_display_demo",
+    vendor: true,
+    //init_rc: ["pure_color_display_demo.rc"],
+    srcs: [
+        "PureColorDisplay.cpp",
+        "main.cpp",
+    ],
+    shared_libs: [
+        "liblog",
+        "libbase",
+        "libbinder_ndk",
+        "android.hardware.graphics.composer3-V2-ndk",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-DLOG_TAG=\"PureColorDisplay\"",
+    ],
+}

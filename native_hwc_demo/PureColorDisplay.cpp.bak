@@ -1,0 +1,339 @@
+#include "PureColorDisplay.h"
+#include <thread>
+#include <chrono>
+
+using namespace std::chrono_literals;
+
+PureColorDisplay::PureColorDisplay() 
+    : mComposer(nullptr)
+    , mClient(nullptr)
+    , mDisplayId(-1)
+    , mLayerId(-1)
+    , mInitialized(false) {
+}
+
+PureColorDisplay::~PureColorDisplay() {
+    cleanup();
+}
+
+bool PureColorDisplay::initialize() {
+    // 获取 HWC 服务
+    auto composerName = std::string(IComposer::descriptor) + "/default";
+    ndk::SpAIBinder binder(AServiceManager_getService(composerName.c_str()));
+    mComposer = IComposer::fromBinder(binder);
+    
+    if (!mComposer) {
+        ALOGE("Failed to get HWC service");
+        return false;
+    }
+    
+    // 创建 ComposerClient
+    std::shared_ptr<IComposerClient> client;
+    auto status = mComposer->createClient(&client);
+    if (!status.isOk() || !client) {
+        ALOGE("Failed to create composer client");
+        return false;
+    }
+    mClient = client;
+    
+    // 设置显示和图层
+    if (!setupDisplay()) {
+        ALOGE("Failed to setup display");
+        return false;
+    }
+    
+    if (!createLayer()) {
+        ALOGE("Failed to create layer");
+        return false;
+    }
+    
+    mInitialized = true;
+    ALOGI("PureColorDisplay initialized successfully");
+    return true;
+}
+
+void PureColorDisplay::cleanup() {
+    if (mLayerId != -1 && mDisplayId != -1 && mClient) {
+        mClient->destroyLayer(mDisplayId, mLayerId);
+        mLayerId = -1;
+    }
+    
+    mClient = nullptr;
+    mComposer = nullptr;
+    mInitialized = false;
+}
+
+bool PureColorDisplay::setupDisplay() {
+    // 获取主显示（通常 ID 为 0）
+    mDisplayId = 0;
+    
+    // 设置电源模式为打开
+    auto status = mClient->setPowerMode(mDisplayId, 
+        aidl::android::hardware::graphics::composer3::PowerMode::ON);
+    if (!status.isOk()) {
+        ALOGE("Failed to set power mode");
+        return false;
+    }
+    
+    // 启用 VSYNC
+    status = mClient->setVsyncEnabled(mDisplayId, true);
+    if (!status.isOk()) {
+        ALOGE("Failed to enable VSYNC");
+    }
+    
+    return true;
+}
+
+bool PureColorDisplay::createLayer() {
+    if (!mClient || mDisplayId == -1) {
+        return false;
+    }
+    
+    // 创建图层，设置缓冲区槽位数
+    const int32_t bufferSlotCount = 1;
+    auto status = mClient->createLayer(mDisplayId, bufferSlotCount, &mLayerId);
+    if (!status.isOk()) {
+        ALOGE("Failed to create layer");
+        return false;
+    }
+    
+    ALOGI("Created layer: %lld", (long long)mLayerId);
+    return true;
+}
+
+bool PureColorDisplay::setLayerColorWithoutPresent(float r, float g, float b, float a) {
+    if (!mInitialized || mDisplayId == -1 || mLayerId == -1) {
+        return false;
+    }
+    
+    std::vector<DisplayCommand> commands;
+    
+    // 创建图层命令（不包含present）
+    LayerCommand layerCommand;
+    layerCommand.layer = mLayerId;
+    
+    // 设置图层颜色
+    Color color;
+    color.r = r;
+    color.g = g;
+    color.b = b;
+    color.a = a;
+    layerCommand.command.setColor(color);
+    
+    // 设置几何属性
+    int32_t width = 1920;
+    int32_t height = 1080;
+    
+    aidl::android::hardware::graphics::composer3::LayerCommand::Source source;
+    source.sourceCrop = {0, 0, static_cast<float>(width), static_cast<float>(height)};
+    layerCommand.command.setSource(source);
+    
+    aidl::android::hardware::graphics::composer3::LayerCommand::Destination dest;
+    dest.displayFrame = {0, 0, width, height};
+    layerCommand.command.setDestination(dest);
+    
+    layerCommand.command.setBlendMode(aidl::android::hardware::graphics::composer3::BlendMode::NONE);
+    layerCommand.command.setZOrder(0x7FFFFFFF);
+    
+    DisplayCommand displayCommand;
+    displayCommand.display = mDisplayId;
+    displayCommand.commands.push_back(layerCommand);
+    commands.push_back(displayCommand);
+    
+    std::vector<aidl::android::hardware::graphics::composer3::CommandResultPayload> results;
+    auto status = mClient->executeCommands(commands, &results);
+    return status.isOk();
+}
+
+bool PureColorDisplay::setLayerColor(float r, float g, float b, float a) {
+    if (!mInitialized || mDisplayId == -1 || mLayerId == -1) {
+        return false;
+    }
+    
+    // 准备显示命令
+    std::vector<DisplayCommand> commands;
+    
+    // 创建图层命令
+    LayerCommand layerCommand;
+    layerCommand.layer = mLayerId;
+    
+    // 设置图层颜色
+    Color color;
+    color.r = r;
+    color.g = g;
+    color.b = b;
+    color.a = a;
+    
+    // 设置图层为纯色
+    layerCommand.command.setColor(color);
+    
+    // 设置图层位置和大小（全屏）
+    int32_t width = 1920; // 简化，实际应该获取显示属性
+    int32_t height = 1080;
+    
+    // 设置显示源区域（整个图层）
+    aidl::android::hardware::graphics::composer3::LayerCommand::Source source;
+    source.sourceCrop = {0, 0, static_cast<float>(width), static_cast<float>(height)};
+    layerCommand.command.setSource(source);
+    
+    // 设置显示目标区域（整个屏幕）
+    aidl::android::hardware::graphics::composer3::LayerCommand::Destination dest;
+    dest.displayFrame = {0, 0, width, height};
+    layerCommand.command.setDestination(dest);
+    
+    // 设置图层混合模式
+    layerCommand.command.setBlendMode(aidl::android::hardware::graphics::composer3::BlendMode::NONE);
+    
+    // 设置图层Z序（在最上面）
+    layerCommand.command.setZOrder(0x7FFFFFFF); // 高Z序值确保在最前面
+    
+    // 创建显示命令
+    DisplayCommand displayCommand;
+    displayCommand.display = mDisplayId;
+    displayCommand.commands.push_back(layerCommand);
+    
+    // 添加present命令
+    DisplayCommand presentCommand;
+    presentCommand.display = mDisplayId;
+    presentCommand.command.setPresentOrValidateDisplay(true); // true 表示present
+    
+    commands.push_back(displayCommand);
+    commands.push_back(presentCommand);
+    
+    // 执行命令
+    std::vector<aidl::android::hardware::graphics::composer3::CommandResultPayload> results;
+    auto status = mClient->executeCommands(commands, &results);
+    if (!status.isOk()) {
+        ALOGE("Failed to execute commands");
+        return false;
+    }
+    
+    // 检查执行结果
+    if (!results.empty()) {
+        for (const auto& result : results) {
+            if (result.getTag() == aidl::android::hardware::graphics::composer3::CommandResultPayload::presentOrValidateDisplayResult) {
+                auto presentResult = result.get<aidl::android::hardware::graphics::composer3::CommandResultPayload::presentOrValidateDisplayResult>();
+                if (presentResult.result != aidl::android::hardware::graphics::composer3::ComposerResult::SUCCESS) {
+                    ALOGE("Present failed with result: %d", static_cast<int>(presentResult.result));
+                    return false;
+                }
+            }
+        }
+    }
+    
+    return true;
+}
+
+bool PureColorDisplay::validateDisplay() {
+    if (!mInitialized || mDisplayId == -1) {
+        return false;
+    }
+    
+    std::vector<DisplayCommand> commands;
+    
+    // 创建validate命令
+    DisplayCommand validateCommand;
+    validateCommand.display = mDisplayId;
+    validateCommand.command.setPresentOrValidateDisplay(false); // false 表示validate
+    
+    commands.push_back(validateCommand);
+    
+    std::vector<aidl::android::hardware::graphics::composer3::CommandResultPayload> results;
+    auto status = mClient->executeCommands(commands, &results);
+    if (!status.isOk()) {
+        ALOGE("Failed to validate display");
+        return false;
+    }
+    
+    // 检查验证结果
+    if (!results.empty()) {
+        for (const auto& result : results) {
+            if (result.getTag() == aidl::android::hardware::graphics::composer3::CommandResultPayload::presentOrValidateDisplayResult) {
+                auto validateResult = result.get<aidl::android::hardware::graphics::composer3::CommandResultPayload::presentOrValidateDisplayResult>();
+                if (validateResult.result != aidl::android::hardware::graphics::composer3::ComposerResult::SUCCESS) {
+                    ALOGE("Validate failed with result: %d", static_cast<int>(validateResult.result));
+                    return false;
+                }
+            }
+        }
+    }
+    
+    return true;
+}
+
+bool PureColorDisplay::presentDisplay() {
+    if (!mInitialized || mDisplayId == -1) {
+        return false;
+    }
+    
+    std::vector<DisplayCommand> commands;
+    
+    // 创建present命令
+    DisplayCommand presentCommand;
+    presentCommand.display = mDisplayId;
+    presentCommand.command.setPresentOrValidateDisplay(true); // true 表示present
+    
+    commands.push_back(presentCommand);
+    
+    std::vector<aidl::android::hardware::graphics::composer3::CommandResultPayload> results;
+    auto status = mClient->executeCommands(commands, &results);
+    if (!status.isOk()) {
+        ALOGE("Failed to present display");
+        return false;
+    }
+    
+    // 检查present结果
+    if (!results.empty()) {
+        for (const auto& result : results) {
+            if (result.getTag() == aidl::android::hardware::graphics::composer3::CommandResultPayload::presentOrValidateDisplayResult) {
+                auto presentResult = result.get<aidl::android::hardware::graphics::composer3::CommandResultPayload::presentOrValidateDisplayResult>();
+                if (presentResult.result != aidl::android::hardware::graphics::composer3::ComposerResult::SUCCESS) {
+                    ALOGE("Present failed with result: %d", static_cast<int>(presentResult.result));
+                    return false;
+                }
+            }
+        }
+    }
+    
+    return true;
+}
+
+bool PureColorDisplay::displaySolidColor(float r, float g, float b, float a) {
+    if (!mInitialized) {
+        ALOGE("Not initialized");
+        return false;
+    }
+    
+    ALOGI("Displaying color: R=%.2f, G=%.2f, B=%.2f, A=%.2f", r, g, b, a);
+    
+    // 方法1: 直接present（推荐用于简单场景）
+	if (false) {
+		
+		if (!setLayerColor(r, g, b, a)) {
+			ALOGE("Failed to set layer color");
+			return false;
+		}
+    } 
+	// 方法2: 先validate再present（推荐用于复杂场景）
+	else {
+		if (!setLayerColorWithoutPresent(r, g, b, a)) {
+			ALOGE("Failed to set layer color");
+			return false;
+		}
+		
+		// 验证显示配置
+		if (!validateDisplay()) {
+			ALOGE("Display validation failed");
+			return false;
+		}
+		
+		// 提交显示
+		if (!presentDisplay()) {
+			ALOGE("Display presentation failed");
+			return false;
+		}
+    }
+    
+    ALOGI("Color displayed successfully");
+    return true;
+}
